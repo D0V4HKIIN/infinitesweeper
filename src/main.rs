@@ -1,16 +1,21 @@
-use bevy::{prelude::*, window::{PrimaryWindow, exit_on_primary_closed}};
+use std::ops::Mul;
+
+use bevy::{
+    input::mouse::{MouseScrollUnit, MouseWheel},
+    math::vec3,
+    prelude::*,
+    window::PrimaryWindow,
+};
 
 const SQUARE_SIZE: f32 = 20.0;
 const SQUARE_COLOR: Color = Color::rgb(0.25, 0.25, 0.75);
+const SCROLL_SPEED: f32 = 0.1;
 
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
-        .init_resource::<Game>()
         .add_systems(Startup, setup)
-        .add_systems(Update, expand_board)
-        .add_systems(Update, handle_cell_click)
-        // .add_systems(Update, exit_on_primary_closed)
+        .add_systems(Update, handle_mouse)
         .run();
 }
 
@@ -21,6 +26,10 @@ fn setup(
 ) {
     commands.spawn(Camera2dBundle::default());
 
+    insert_cell(Transform::from_translation(Vec3::new(0., 0., 0.)), commands)
+}
+
+fn insert_cell(pos: Transform, mut commands: Commands) {
     // Rectangle
     commands
         .spawn(SpriteBundle {
@@ -29,17 +38,19 @@ fn setup(
                 custom_size: Some(Vec2::new(SQUARE_SIZE, SQUARE_SIZE)),
                 ..default()
             },
-            transform: Transform::from_translation(Vec3::new(0., 0., 0.)),
+            transform: pos,
             ..default()
         })
         .insert(Cell);
 }
 
 // finds which cell has been clicked
-fn handle_cell_click(
-    mouse_input: Res<Input<MouseButton>>,
+fn handle_mouse(
+    mouse_button: Res<Input<MouseButton>>,
+    mut scroll_event: EventReader<MouseWheel>,
     window_q: Query<&Window, With<PrimaryWindow>>,
     camera_q: Query<(&Camera, &GlobalTransform)>,
+    mut camera_projection: Query<&mut OrthographicProjection, With<Camera>>,
     mut cell_q: Query<(&mut Sprite, &Handle<Image>, &GlobalTransform, Entity), With<Cell>>,
 ) {
     let (camera, camera_transform) = camera_q.single();
@@ -47,10 +58,10 @@ fn handle_cell_click(
     let scale_factor = primary_window.scale_factor() as f32;
     let mut active_entity = None;
 
-    if mouse_input.just_pressed(MouseButton::Left) {
+    // find clicked cell
+    if mouse_button.just_released(MouseButton::Left) {
         if let Some(pos) = primary_window.cursor_position() {
             if let Some(pos) = camera.viewport_to_world_2d(camera_transform, pos) {
-                println!("clicked at {}, {}", pos.x, pos.y);
                 for (sprite, handle, node_transform, entity) in &mut cell_q.iter_mut() {
                     let size = sprite.custom_size.unwrap(); //sprite.rect.unwrap();
 
@@ -73,20 +84,31 @@ fn handle_cell_click(
         }
     }
 
-    if let Some((mut sprite, handle, node_transform, entity)) = active_entity {
+    // update color of clicked cell
+    if let Some((mut sprite, _handle, _node_transform, _entity)) = active_entity {
         println!("active entity: {:#?}", sprite);
         sprite.color = Color::rgb(0.75, 0.75, 0.25);
     }
-}
 
-fn expand_board(game: ResMut<Game>, mut commands: Commands, time: Res<Time>) {
-    // println!("{:#?}", game.bombs);
-}
-
-#[derive(Resource, Default)]
-struct Game {
-    bombs: Vec<(i32, i32)>,
+    // zoom using scrolling
+    for event in scroll_event.read() {
+        match event.unit {
+            MouseScrollUnit::Line => {
+                let mut projection = camera_projection.single_mut();
+                projection.scale = (projection.scale - event.y * SCROLL_SPEED).clamp(0.1, 100.);
+            }
+            MouseScrollUnit::Pixel => {
+                println!(
+                    "NOT SUPPORTED Scroll (pixel units): vertical: {}, horizontal: {}",
+                    event.y, event.x
+                );
+            }
+        }
+    }
 }
 
 #[derive(Component)]
 pub struct Cell;
+
+#[derive(Component)]
+pub struct Bomb;
