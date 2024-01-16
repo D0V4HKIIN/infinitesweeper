@@ -1,3 +1,5 @@
+use core::panic;
+
 use bevy::{
     input::mouse::{MouseScrollUnit, MouseWheel},
     prelude::*,
@@ -66,61 +68,65 @@ fn handle_mouse(
     // let scale_factor = primary_window.scale_factor() as f32;
     let mut active_entity = None;
 
-    // dragging
-    if mouse_button.just_pressed(MouseButton::Left) {
-        if let Some(pos) = primary_window.cursor_position() {
-            drag_data.is_dragging = true;
-            drag_data.drag_start = pos;
-            drag_data.camera_start = camera_transform.translation.clone();
-            println!("camera pos at {}", camera_transform.translation.xy());
-        }
+    let mouse_window_pos;
+    match primary_window.cursor_position() {
+        Some(pos) => mouse_window_pos = pos,
+        _ => return,
     }
 
-    if mouse_button.just_released(MouseButton::Left) {
-        drag_data.is_dragging = false;
+    let mouse_viewport_pos;
+    match camera.viewport_to_world_2d(camera_global_transform, mouse_window_pos) {
+        Some(pos) => mouse_viewport_pos = pos,
+        _ => return,
+    }
+
+    // dragging
+    if mouse_button.just_pressed(MouseButton::Left) {
+        drag_data.is_dragging = true;
+        drag_data.drag_start = mouse_window_pos;
+        drag_data.camera_start = camera_transform.translation.clone();
     }
 
     if drag_data.is_dragging {
-        if let Some(pos) = primary_window.cursor_position() {
-            let mut mouse_diff: Vec3 = (pos - drag_data.drag_start).extend(0.);
+        let mut mouse_diff: Vec3 = (mouse_window_pos - drag_data.drag_start).extend(0.);
 
-            mouse_diff.x *= -1.;
-
-            mouse_diff *= projection.scale;
-
-            camera_transform.translation = drag_data.camera_start + mouse_diff;
-
-            println!(
-                    "camera start {} and drag start {}, mouse_diff {}, pos {}, computing {}, huh {}",
-                    drag_data.camera_start,
-                    drag_data.drag_start,
-                    mouse_diff,
-                    pos,
-                    drag_data.camera_start + mouse_diff,
-                    Vec3::new(1., 2., 3.) + Vec3::new(1.1, 2.2, 3.3),
-                );
+        if mouse_diff.length() > 0.1 {
+            drag_data.is_actually_dragging = true;
         }
+
+        mouse_diff.x *= -1.;
+
+        mouse_diff *= projection.scale;
+
+        camera_transform.translation = drag_data.camera_start + mouse_diff;
     }
 
     // find clicked cell
     if mouse_button.just_released(MouseButton::Left) {
-        if let Some(pos) = primary_window.cursor_position() {
-            if let Some(pos) = camera.viewport_to_world_2d(camera_global_transform, pos) {
-                for (sprite, handle, node_transform, entity) in &mut cell_q.iter_mut() {
-                    let size = sprite.custom_size.unwrap(); //sprite.rect.unwrap();
+        if !drag_data.is_actually_dragging {
+            for (sprite, handle, node_transform, entity) in &mut cell_q.iter_mut() {
+                let size = sprite.custom_size.unwrap(); //sprite.rect.unwrap();
 
-                    let x_min = node_transform.affine().translation.x - size.x / 2.; // + size.min.x;
-                    let y_min = node_transform.affine().translation.y - size.y / 2.; // + size.min.y;
-                    let x_max = node_transform.affine().translation.x + size.x / 2.; // + size.max.x;
-                    let y_max = node_transform.affine().translation.y + size.y / 2.; // + size.max.y;
+                let x_min = node_transform.affine().translation.x - size.x / 2.; // + size.min.x;
+                let y_min = node_transform.affine().translation.y - size.y / 2.; // + size.min.y;
+                let x_max = node_transform.affine().translation.x + size.x / 2.; // + size.max.x;
+                let y_max = node_transform.affine().translation.y + size.y / 2.; // + size.max.y;
 
-                    if x_min < pos.x && pos.x < x_max && y_min < pos.y && pos.y < y_max {
-                        println!("found entity");
-                        active_entity = Some((sprite, handle, node_transform, entity));
-                    }
+                if x_min < mouse_viewport_pos.x
+                    && mouse_viewport_pos.x < x_max
+                    && y_min < mouse_viewport_pos.y
+                    && mouse_viewport_pos.y < y_max
+                {
+                    println!("found entity");
+                    active_entity = Some((sprite, handle, node_transform, entity));
                 }
             }
         }
+    }
+
+    // release dragging
+    if mouse_button.just_released(MouseButton::Left) {
+        drag_data.is_dragging = false;
     }
 
     // update color of clicked cell
@@ -159,6 +165,7 @@ pub struct Bomb;
 #[derive(Resource, Default)]
 struct MouseDragData {
     is_dragging: bool,
+    is_actually_dragging: bool,
     drag_start: Vec2,
     camera_start: Vec3,
 }
