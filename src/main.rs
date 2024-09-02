@@ -1,5 +1,3 @@
-use core::panic;
-
 use bevy::{
     input::mouse::{MouseScrollUnit, MouseWheel},
     prelude::*,
@@ -16,6 +14,7 @@ fn main() {
         .add_systems(Startup, setup)
         .add_systems(Update, handle_mouse)
         .init_resource::<MouseDragData>()
+        .init_resource::<GenerationData>()
         .run();
 }
 
@@ -26,10 +25,10 @@ fn setup(
 ) {
     commands.spawn(Camera2dBundle::default());
 
-    insert_cell(Transform::from_translation(Vec3::new(0., 0., 0.)), commands)
+    insert_cell(Vec3::new(0., 0., 0.), &mut commands);
 }
 
-fn insert_cell(pos: Transform, mut commands: Commands) {
+fn insert_cell(pos: Vec3, commands: &mut Commands) {
     // Rectangle
     commands
         .spawn(SpriteBundle {
@@ -38,7 +37,7 @@ fn insert_cell(pos: Transform, mut commands: Commands) {
                 custom_size: Some(Vec2::new(SQUARE_SIZE, SQUARE_SIZE)),
                 ..default()
             },
-            transform: pos,
+            transform: Transform::from_translation(pos * (SQUARE_SIZE + 1.)),
             ..default()
         })
         .insert(Cell);
@@ -46,8 +45,10 @@ fn insert_cell(pos: Transform, mut commands: Commands) {
 
 // finds which cell has been clicked
 fn handle_mouse(
+    mut commands: Commands,
     mouse_button: Res<Input<MouseButton>>,
     mut drag_data: ResMut<MouseDragData>,
+    mut generation_data: ResMut<GenerationData>,
     mut scroll_event: EventReader<MouseWheel>,
     window_q: Query<&Window, With<PrimaryWindow>>,
     mut camera_q: Query<
@@ -117,7 +118,6 @@ fn handle_mouse(
                     && y_min < mouse_viewport_pos.y
                     && mouse_viewport_pos.y < y_max
                 {
-                    println!("found entity");
                     active_entity = Some((sprite, handle, node_transform, entity));
                 }
             }
@@ -127,16 +127,17 @@ fn handle_mouse(
     // release dragging
     if mouse_button.just_released(MouseButton::Left) {
         drag_data.is_dragging = false;
+        drag_data.is_actually_dragging = false;
     }
 
     // update color of clicked cell
     if let Some((mut sprite, _handle, _node_transform, _entity)) = active_entity {
-        println!("active entity: {:#?}", sprite);
         if sprite.color == SQUARE_COLOR {
             sprite.color = Color::rgb(0.75, 0.75, 0.25);
         } else {
             sprite.color = SQUARE_COLOR;
         }
+        generate_cells(&mut generation_data, &mut commands);
     }
 
     // zoom using scrolling
@@ -156,11 +157,52 @@ fn handle_mouse(
     }
 }
 
+fn generate_cells(generation_data: &mut GenerationData, commands: &mut Commands) {
+    for _ in 0..3 {
+        let size: f32 = generation_data.size as f32;
+        if generation_data.location[generation_data.dir % 2] >= size
+            || generation_data.location[generation_data.dir % 2] <= -size
+        {
+            generation_data.dir += 1;
+            if generation_data.dir >= 4 {
+                generation_data.dir = 0;
+                generation_data.size += 1;
+            }
+        }
+        generation_data.location += generation_data.directions[generation_data.dir];
+        insert_cell(generation_data.location, commands);
+    }
+}
+
 #[derive(Component)]
 pub struct Cell;
 
 #[derive(Component)]
 pub struct Bomb;
+
+#[derive(Resource)]
+struct GenerationData {
+    location: Vec3,
+    directions: [Vec3; 4],
+    dir: usize,
+    size: usize,
+}
+
+impl Default for GenerationData {
+    fn default() -> GenerationData {
+        GenerationData {
+            location: Vec3::new(0., 0., 0.),
+            directions: [
+                Vec3::new(1., 0., 0.),
+                Vec3::new(0., -1., 0.),
+                Vec3::new(-1., 0., 0.),
+                Vec3::new(0., 1., 0.),
+            ],
+            dir: 0,
+            size: 1,
+        }
+    }
+}
 
 #[derive(Resource, Default)]
 struct MouseDragData {
