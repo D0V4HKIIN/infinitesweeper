@@ -4,6 +4,8 @@ use bevy::{
     window::PrimaryWindow,
 };
 
+use std::collections::HashSet;
+
 const SQUARE_SIZE: f32 = 20.0;
 const SQUARE_COLOR: Color = Color::rgb(0.25, 0.25, 0.75);
 const SCROLL_SPEED: f32 = 0.1;
@@ -22,13 +24,15 @@ fn setup(
     mut commands: Commands,
     _meshes: ResMut<Assets<Mesh>>,
     _materials: ResMut<Assets<ColorMaterial>>,
+    mut generation_data: ResMut<GenerationData>,
 ) {
     commands.spawn(Camera2dBundle::default());
 
-    insert_cell(Vec3::new(0., 0., 0.), &mut commands);
+    insert_cell([0, 0], &mut commands, &mut generation_data);
 }
 
-fn insert_cell(pos: Vec3, commands: &mut Commands) {
+fn insert_cell(pos: [isize; 2], commands: &mut Commands, generation_data: &mut GenerationData) {
+    let float_pos = Vec3::new(pos[0] as f32, pos[1] as f32, 0.);
     // Rectangle
     commands
         .spawn(SpriteBundle {
@@ -37,10 +41,13 @@ fn insert_cell(pos: Vec3, commands: &mut Commands) {
                 custom_size: Some(Vec2::new(SQUARE_SIZE, SQUARE_SIZE)),
                 ..default()
             },
-            transform: Transform::from_translation(pos * (SQUARE_SIZE + 1.)),
+            transform: Transform::from_translation(float_pos * (SQUARE_SIZE + 1.)),
             ..default()
         })
         .insert(Cell);
+
+    // remember for later
+    generation_data.generated_cells.insert(pos);
 }
 
 // finds which cell has been clicked
@@ -157,11 +164,11 @@ fn handle_mouse(
     }
 }
 
+// should generate neighbours that are empty with a limit or smth
 fn generate_cells(generation_data: &mut GenerationData, commands: &mut Commands) {
     for _ in 0..3 {
-        let size: f32 = generation_data.size as f32;
-        if generation_data.location[generation_data.dir % 2] >= size
-            || generation_data.location[generation_data.dir % 2] <= -size
+        if generation_data.location[generation_data.dir % 2] >= generation_data.size
+            || generation_data.location[generation_data.dir % 2] <= -generation_data.size
         {
             generation_data.dir += 1;
             if generation_data.dir >= 4 {
@@ -169,8 +176,9 @@ fn generate_cells(generation_data: &mut GenerationData, commands: &mut Commands)
                 generation_data.size += 1;
             }
         }
-        generation_data.location += generation_data.directions[generation_data.dir];
-        insert_cell(generation_data.location, commands);
+        generation_data.location[0] += generation_data.directions[generation_data.dir][0];
+        generation_data.location[1] += generation_data.directions[generation_data.dir][1];
+        insert_cell(generation_data.location, commands, generation_data);
     }
 }
 
@@ -182,24 +190,21 @@ pub struct Bomb;
 
 #[derive(Resource)]
 struct GenerationData {
-    location: Vec3,
-    directions: [Vec3; 4],
+    location: [isize; 2],
+    directions: [[isize; 2]; 4],
     dir: usize,
-    size: usize,
+    size: isize,
+    generated_cells: HashSet<[isize; 2]>,
 }
 
 impl Default for GenerationData {
     fn default() -> GenerationData {
         GenerationData {
-            location: Vec3::new(0., 0., 0.),
-            directions: [
-                Vec3::new(1., 0., 0.),
-                Vec3::new(0., -1., 0.),
-                Vec3::new(-1., 0., 0.),
-                Vec3::new(0., 1., 0.),
-            ],
+            location: [0, 0],
+            directions: [[1, 0], [0, -1], [-1, 0], [0, 1]],
             dir: 0,
             size: 1,
+            generated_cells: HashSet::new(),
         }
     }
 }
