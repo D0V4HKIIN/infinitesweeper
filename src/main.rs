@@ -6,6 +6,9 @@ use bevy::{
 
 use std::collections::HashSet;
 
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+
 const SQUARE_SIZE: f32 = 20.0;
 const SQUARE_COLOR: Color = Color::rgb(0.25, 0.25, 0.75);
 const SCROLL_SPEED: f32 = 0.1;
@@ -31,20 +34,44 @@ fn setup(
     insert_cell([0, 0], &mut commands, &mut generation_data);
 }
 
+fn is_bomb(pos: [isize; 2]) -> bool {
+    let mut hasher = DefaultHasher::new();
+    pos.hash(&mut hasher);
+    hasher.finish() % 5 == 1 // if == 0 [0,0] bomb
+}
+
 fn insert_cell(pos: [isize; 2], commands: &mut Commands, generation_data: &mut GenerationData) {
     let float_pos = Vec3::new(pos[0] as f32, pos[1] as f32, 0.);
     // Rectangle
-    commands
-        .spawn(SpriteBundle {
-            sprite: Sprite {
-                color: SQUARE_COLOR,
-                custom_size: Some(Vec2::new(SQUARE_SIZE, SQUARE_SIZE)),
-                ..default()
-            },
-            transform: Transform::from_translation(float_pos * (SQUARE_SIZE + 1.)),
+    let mut cell = commands.spawn(SpriteBundle {
+        sprite: Sprite {
+            color: SQUARE_COLOR,
+            custom_size: Some(Vec2::new(SQUARE_SIZE, SQUARE_SIZE)),
             ..default()
-        })
-        .insert(Cell);
+        },
+        transform: Transform::from_translation(float_pos * (SQUARE_SIZE + 1.)),
+        ..default()
+    });
+    cell.insert(Cell);
+
+    if is_bomb(pos) {
+        cell.insert(Bomb);
+        let regular_font_handle: Handle<Font> = Default::default();
+
+        let text_style = TextStyle {
+            font: regular_font_handle.clone(),
+            font_size: 20.0,
+            ..default()
+        };
+
+        commands.spawn(Text2dBundle {
+            text: Text::from_section("B", text_style.clone()),
+            transform: Transform::from_translation(
+                float_pos * (SQUARE_SIZE + 1.) + Vec3::new(0., 0., 1.),
+            ),
+            ..default()
+        });
+    }
 
     // remember for later
     generation_data.generated_cells.insert(pos);
