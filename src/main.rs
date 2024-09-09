@@ -19,7 +19,7 @@ fn main() {
         .add_systems(Startup, setup)
         .add_systems(Update, handle_mouse)
         .init_resource::<MouseDragData>()
-        .init_resource::<GenerationData>()
+        .init_resource::<GeneratedCells>()
         .run();
 }
 
@@ -27,11 +27,12 @@ fn setup(
     mut commands: Commands,
     _meshes: ResMut<Assets<Mesh>>,
     _materials: ResMut<Assets<ColorMaterial>>,
-    mut generation_data: ResMut<GenerationData>,
+    generated_cells_res: ResMut<GeneratedCells>,
 ) {
     commands.spawn(Camera2dBundle::default());
 
-    insert_cell([0, 0], &mut commands, &mut generation_data);
+    let generated_cells = &mut generated_cells_res.into_inner().generated_cells;
+    insert_cell([0, 0], &mut commands, generated_cells);
 }
 
 fn is_bomb(pos: [isize; 2]) -> bool {
@@ -40,7 +41,11 @@ fn is_bomb(pos: [isize; 2]) -> bool {
     hasher.finish() % 5 == 1 // if == 0 [0,0] bomb
 }
 
-fn insert_cell(pos: [isize; 2], commands: &mut Commands, generation_data: &mut GenerationData) {
+fn insert_cell(
+    pos: [isize; 2],
+    commands: &mut Commands,
+    generated_cells: &mut HashSet<[isize; 2]>,
+) {
     let float_pos = Vec3::new(pos[0] as f32, pos[1] as f32, 0.);
     // Rectangle
     let mut cell = commands.spawn(SpriteBundle {
@@ -52,7 +57,7 @@ fn insert_cell(pos: [isize; 2], commands: &mut Commands, generation_data: &mut G
         transform: Transform::from_translation(float_pos * (SQUARE_SIZE + 1.)),
         ..default()
     });
-    cell.insert(Cell);
+    cell.insert(Cell { pos: pos });
 
     if is_bomb(pos) {
         cell.insert(Bomb);
@@ -74,7 +79,7 @@ fn insert_cell(pos: [isize; 2], commands: &mut Commands, generation_data: &mut G
     }
 
     // remember for later
-    generation_data.generated_cells.insert(pos);
+    generated_cells.insert(pos);
 }
 
 // finds which cell has been clicked
@@ -82,7 +87,6 @@ fn handle_mouse(
     mut commands: Commands,
     mouse_button: Res<Input<MouseButton>>,
     mut drag_data: ResMut<MouseDragData>,
-    mut generation_data: ResMut<GenerationData>,
     mut scroll_event: EventReader<MouseWheel>,
     window_q: Query<&Window, With<PrimaryWindow>>,
     mut camera_q: Query<
@@ -94,7 +98,8 @@ fn handle_mouse(
         ),
         Without<Cell>,
     >, // without cell because cell_q also has a Globaltransform thing idk
-    mut cell_q: Query<(&mut Sprite, &Handle<Image>, &GlobalTransform, Entity), With<Cell>>,
+    mut cell_q: Query<(&mut Sprite, &Handle<Image>, &GlobalTransform, Entity, &Cell)>,
+    generated_cells_res: ResMut<GeneratedCells>,
 ) {
     let (camera, camera_global_transform, mut camera_transform, mut projection) =
         camera_q.single_mut(); //
@@ -114,6 +119,8 @@ fn handle_mouse(
         Some(pos) => mouse_viewport_pos = pos,
         _ => return,
     }
+
+    let generated_cells = &mut generated_cells_res.into_inner().generated_cells;
 
     // dragging
     if mouse_button.just_pressed(MouseButton::Left) {
@@ -139,7 +146,7 @@ fn handle_mouse(
     // find clicked cell
     if mouse_button.just_released(MouseButton::Left) {
         if !drag_data.is_actually_dragging {
-            for (sprite, handle, node_transform, entity) in &mut cell_q.iter_mut() {
+            for (sprite, handle, node_transform, entity, cell) in &mut cell_q.iter_mut() {
                 let size = sprite.custom_size.unwrap(); //sprite.rect.unwrap();
 
                 let x_min = node_transform.affine().translation.x - size.x / 2.; // + size.min.x;
@@ -152,7 +159,7 @@ fn handle_mouse(
                     && y_min < mouse_viewport_pos.y
                     && mouse_viewport_pos.y < y_max
                 {
-                    active_entity = Some((sprite, handle, node_transform, entity));
+                    active_entity = Some((sprite, handle, node_transform, entity, cell));
                 }
             }
         }
@@ -165,13 +172,18 @@ fn handle_mouse(
     }
 
     // update color of clicked cell
-    if let Some((mut sprite, _handle, _node_transform, _entity)) = active_entity {
+    if let Some((mut sprite, _handle, _node_transform, _entity, cell)) = active_entity {
         if sprite.color == SQUARE_COLOR {
             sprite.color = Color::rgb(0.75, 0.75, 0.25);
         } else {
             sprite.color = SQUARE_COLOR;
         }
-        generate_cells(&mut generation_data, &mut commands);
+        // generate_cells(&mut generation_data, &mut commands);
+        generate_cells(
+            &mut GenerationData::new(cell.pos),
+            generated_cells,
+            &mut commands,
+        );
     }
 
     // zoom using scrolling
@@ -192,46 +204,85 @@ fn handle_mouse(
 }
 
 // should generate neighbours that are empty with a limit or smth
-fn generate_cells(generation_data: &mut GenerationData, commands: &mut Commands) {
+fn generate_cells(
+    generation_data: &mut GenerationData,
+    generated_cells: &mut HashSet<[isize; 2]>,
+    commands: &mut Commands,
+) {
     for _ in 0..3 {
-        if generation_data.location[generation_data.dir % 2] >= generation_data.size
-            || generation_data.location[generation_data.dir % 2] <= -generation_data.size
-        {
-            generation_data.dir += 1;
-            if generation_data.dir >= 4 {
-                generation_data.dir = 0;
-                generation_data.size += 1;
+        while generated_cells.contains(&generation_data.pos) {
+            if generation_data.origin[generation_data.dir % 2]
+                - generation_data.pos[generation_data.dir % 2]
+                >= generation_data.size
+                || generation_data.origin[generation_data.dir % 2]
+                    - generation_data.pos[generation_data.dir % 2]
+                    <= -generation_data.size
+            {
+                generation_data.dir += 1;
+                if generation_data.dir >= 4 {
+                    generation_data.dir = 0;
+                    generation_data.size += 1;
+                }
             }
+            generation_data.pos[0] += generation_data.directions[generation_data.dir][0];
+            generation_data.pos[1] += generation_data.directions[generation_data.dir][1];
         }
-        generation_data.location[0] += generation_data.directions[generation_data.dir][0];
-        generation_data.location[1] += generation_data.directions[generation_data.dir][1];
-        insert_cell(generation_data.location, commands, generation_data);
+        insert_cell(generation_data.pos, commands, generated_cells);
     }
 }
 
 #[derive(Component)]
-pub struct Cell;
+pub struct Cell {
+    pos: [isize; 2],
+}
 
 #[derive(Component)]
 pub struct Bomb;
 
-#[derive(Resource)]
 struct GenerationData {
-    location: [isize; 2],
+    pos: [isize; 2],
+    origin: [isize; 2],
     directions: [[isize; 2]; 4],
     dir: usize,
     size: isize,
+}
+
+#[derive(Resource)]
+struct GeneratedCells {
     generated_cells: HashSet<[isize; 2]>,
 }
 
 impl Default for GenerationData {
     fn default() -> GenerationData {
         GenerationData {
-            location: [0, 0],
+            pos: [0, 0],
+            origin: [0, 0],
             directions: [[1, 0], [0, -1], [-1, 0], [0, 1]],
             dir: 0,
             size: 1,
+        }
+    }
+}
+
+impl Default for GeneratedCells {
+    fn default() -> GeneratedCells {
+        GeneratedCells {
             generated_cells: HashSet::new(),
+        }
+    }
+}
+
+pub trait New<T> {
+    fn new(loc: T) -> Self;
+}
+impl New<[isize; 2]> for GenerationData {
+    fn new(loc: [isize; 2]) -> GenerationData {
+        GenerationData {
+            pos: loc,
+            origin: loc,
+            directions: [[1, 0], [0, -1], [-1, 0], [0, 1]],
+            dir: 0,
+            size: 1,
         }
     }
 }
